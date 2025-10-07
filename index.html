@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>OJT Card Calculator (MVP)</title>
+<style>
+  body { font-family: system-ui, Arial, sans-serif; margin: 24px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border: 1px solid #ddd; padding: 8px; text-align: right; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  tfoot td { font-weight: bold; }
+  .controls { display:flex; gap:12px; align-items:center; margin-bottom:12px; }
+  @media print {
+    .controls { display: none; }
+    body { margin: 0.5in; }
+  }
+</style>
+</head>
+<body>
+  <h1>OJT Card Calculator</h1>
+  <div class="controls">
+    <label>Month:
+      <input type="month" id="monthPicker" />
+    </label>
+    <button id="clearBtn">Clear All</button>
+    <button onclick="window.print()">Print / Save PDF</button>
+  </div>
+
+  <table id="ojt">
+    <thead>
+      <tr>
+        <th>Date</th><th>Hours (or X)</th>
+        <th>1</th><th>2</th><th>3</th><th>4</th>
+        <th>5</th><th>6</th><th>7</th><th>8</th>
+        <th>Total Min</th><th>Total Hrs</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+    <tfoot>
+      <tr>
+        <td colspan="2">TOTALS (minutes)</td>
+        <td id="t1">0</td><td id="t2">0</td><td id="t3">0</td><td id="t4">0</td>
+        <td id="t5">0</td><td id="t6">0</td><td id="t7">0</td><td id="t8">0</td>
+        <td id="tMin">0</td><td id="tHrs">0</td>
+      </tr>
+      <tr>
+        <td colspan="2">DIVIDE BY 60 (hours)</td>
+        <td id="d1">0.00</td><td id="d2">0.00</td><td id="d3">0.00</td><td id="d4">0.00</td>
+        <td id="d5">0.00</td><td id="d6">0.00</td><td id="d7">0.00</td><td id="d8">0.00</td>
+        <td id="dMin">—</td><td id="dTot">0.00</td>
+      </tr>
+    </tfoot>
+  </table>
+
+<script>
+// --- NEW: official lookup (exact minutes per daily total) ---
+const LOOKUP = {
+  330: [4,17,2,82, 90,120,7,8],
+  360: [4,18,2,90,100,131,7,8],
+  390: [5,19,2,98,107,141,8,10],
+  420: [5,20,2,105,118,152,8,10],
+  450: [6,23,2,113,124,162,9,11],
+  480: [6,24,2,120,132,174,10,12],
+  510: [6,25,3,129,140,185,10,12],
+  540: [7,27,3,135,148,196,10,14],
+  570: [7,29,3,143,157,207,10,14],
+  600: [7,30,3,150,165,219,12,14],
+  630: [8,31,3,158,173,228,13,16],
+  660: [8,33,3,165,182,240,13,16],
+};
+
+// Keep percentages only as a fallback for non-standard totals
+const PCT = [0.0125, 0.05, 0.005, 0.25, 0.275, 0.3625, 0.02, 0.025];
+
+const rowsEl = document.getElementById('rows');
+const monthPicker = document.getElementById('monthPicker');
+const clearBtn = document.getElementById('clearBtn');
+
+function daysInMonth(yyyy, mm) { return new Date(yyyy, mm, 0).getDate(); }
+
+// NEW: central distributor
+function distributeByMinutes(totalMinutes){
+  if (LOOKUP[totalMinutes]) return LOOKUP[totalMinutes].slice(); // exact match
+  // fallback: percent math; force exact sum via remainder
+  const raw = PCT.map(p => totalMinutes * p);
+  const out = raw.map((v,i) => (i<7 ? Math.round(v) : 0));
+  const used = out.reduce((a,b)=>a+b,0);
+  out[7] = totalMinutes - used;
+  return out;
+}
+
+function buildTable(yyyy, mm) {
+  rowsEl.innerHTML = '';
+  const n = daysInMonth(yyyy, mm);
+  for (let d = 1; d <= n; d++) {
+    const tr = document.createElement('tr');
+
+    const tdDate = document.createElement('td');
+    tdDate.textContent = `${yyyy}-${String(mm).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    tr.appendChild(tdDate);
+
+    const hours = document.createElement('input');
+    hours.type = 'text'; hours.placeholder = 'e.g., 8 or X'; hours.style.width='100px';
+    const tdHours = document.createElement('td'); tdHours.appendChild(hours); tr.appendChild(tdHours);
+
+    const catTds = Array.from({length:8}, ()=> {
+      const td = document.createElement('td'); td.textContent = ''; return td;
+    });
+    catTds.forEach(td=>tr.appendChild(td));
+
+    const tdMin = document.createElement('td'); tdMin.textContent = ''; tr.appendChild(tdMin);
+    const tdHrs = document.createElement('td'); tdHrs.textContent = ''; tr.appendChild(tdHrs);
+
+    hours.addEventListener('input', () => recalcRow(tr));
+    rowsEl.appendChild(tr);
+  }
+  recalcTotals();
+}
+
+function recalcRow(tr){
+  const tds = tr.querySelectorAll('td');
+  const input = tr.querySelector('input').value.trim();
+  if (!input || input.toUpperCase()==='X') {
+    for (let i=2;i<=9;i++) tds[i].textContent = '';
+    tds[10].textContent = '';
+    tds[11].textContent = '';
+    recalcTotals();
+    return;
+  }
+  const hrs = Number(input);
+  if (Number.isNaN(hrs) || hrs < 0) return;
+
+  const minutes = Math.round(hrs * 60);
+  const parts = distributeByMinutes(minutes); // <-- ONLY CHANGE THAT MATTERS
+
+  for (let i=0;i<8;i++) tr.children[2+i].textContent = parts[i];
+  tds[10].textContent = minutes;
+  tds[11].textContent = (minutes/60).toFixed(2);
+
+  recalcTotals();
+}
+
+function recalcTotals(){
+  const totals = Array(8).fill(0);
+  let tMin = 0, tHrs = 0;
+  rowsEl.querySelectorAll('tr').forEach(tr=>{
+    for (let i=0;i<8;i++){
+      const v = Number(tr.children[2+i].textContent||0);
+      totals[i]+=v;
+    }
+    tMin += Number(tr.children[10].textContent||0);
+    tHrs += Number(tr.children[11].textContent||0);
+  });
+  for (let i=0;i<8;i++){
+    document.getElementById('t'+(i+1)).textContent = totals[i];
+    document.getElementById('d'+(i+1)).textContent = (totals[i]/60).toFixed(2);
+  }
+  document.getElementById('tMin').textContent = tMin;
+  document.getElementById('tHrs').textContent = tHrs.toFixed(2);
+  document.getElementById('dTot').textContent = (tMin/60).toFixed(2);
+}
+
+monthPicker.addEventListener('change', e=>{
+  const [y,m] = e.target.value.split('-').map(Number);
+  if (y && m) buildTable(y,m);
+});
+
+// default to current month
+const today = new Date();
+monthPicker.value = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+buildTable(today.getFullYear(), today.getMonth()+1);
+
+clearBtn.onclick = ()=>{
+  rowsEl.querySelectorAll('input').forEach(inp=>inp.value='');
+  rowsEl.querySelectorAll('tr').forEach(tr=>recalcRow(tr));
+};
+</script>
+</body>
+</html>
