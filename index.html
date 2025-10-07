@@ -101,7 +101,7 @@ function buildTable(yyyy, mm) {
     tr.appendChild(tdDate);
 
     const hours = document.createElement('input');
-    hours.type = 'text'; hours.placeholder = 'e.g., 8 or X'; hours.style.width='100px';
+    hours.type = 'text'; hours.placeholder = 'enter hours worked'; hours.style.width='100px';
     const tdHours = document.createElement('td'); tdHours.appendChild(hours); tr.appendChild(tdHours);
 
     const catTds = Array.from({length:8}, ()=> {
